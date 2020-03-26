@@ -107,7 +107,7 @@ if 'py2exe' in sys.argv:
         'py2exe': {
             'packages': ['encodings', 'gi'],
             'optimize': 2,  # extra optimization (like python -OO)
-            'includes': ['gi'],
+            'includes': ['gi', 'plyer', 'plyer.platforms'],
             'excludes': ['pyreadline', 'difflib', 'doctest',
                          'pickle', 'ftplib', 'bleachbit.Unix'],
             'dll_excludes': [
