@@ -1,7 +1,7 @@
 ;  vim: ts=4:sw=4:expandtab
 ;
 ;  BleachBit
-;  Copyright (C) 2008-2020 Andrew Ziem
+;  Copyright (C) 2008-2021 Andrew Ziem
 ;  https://www.bleachbit.org
 ;
 ;  This program is free software: you can redistribute it and/or modify
@@ -226,7 +226,6 @@ VIFileVersion ${File_VERSION}
 ; MUI_UNPAGE_DIRECTORY not needed, ATM.
 ; !insertmacro MUI_UNPAGE_DIRECTORY
 !insertmacro MUI_UNPAGE_COMPONENTS
-UninstallText $(BLEACHBIT_UNINSTALL_TEXT)
 !insertmacro MUI_UNPAGE_INSTFILES
 !define MUI_UNFINISHPAGE_NOAUTOCLOSE
 !insertmacro MUI_UNPAGE_FINISH
@@ -302,21 +301,32 @@ Function RefreshShellIcons
   System::Call 'shell32.dll::SHChangeNotify(i, i, i, i) v (${SHCNE_ASSOCCHANGED}, ${SHCNF_IDLIST}, 0, 0)'
 FunctionEnd
 
+Function .onVerifyInstDir
+  ; This callback belongs to MUI_PAGE_DIRECTORY and is called every time the user presses Browse
+  ; button and selects install directory. It does not affect typing in the input field.
+
+  ; The purpose is to prevent installation in a shared folder such as %ProgramFiles%
+  ; by adding the product name to the end.
+
+  ${GetFileName} $INSTDIR $R0 ; get the last part of the path
+  StrCmp $R0 ${prodname} no_append
+  StrCpy $INSTDIR "$INSTDIR\${prodname}"
+  no_append:
+FunctionEnd
+
 ;--------------------------------
 ;Default section
 Section Core (Required)
     SectionIn RO
 
     SetOutPath $INSTDIR
-    File /r "..\dist\*.*"
-    File "..\COPYING"
-
-    SetOutPath "$INSTDIR\share\"
-    File "..\bleachbit.png"
+    File /r /x "locale" "..\dist\*.*"
+    
+    CopyFiles $WINDIR\Fonts\segoeui.tt? $INSTDIR\share\fonts
+    CopyFiles $WINDIR\Fonts\tahoma.tt? $INSTDIR\share\fonts
 
     # uninstaller
     WriteUninstaller "$INSTDIR\uninstall.exe"
-
 
     SetOutPath "$INSTDIR\"
     CreateDirectory "$SMPROGRAMS\${prodname}"
@@ -336,12 +346,13 @@ SectionEnd
 SectionGroup /e Shortcuts
     Section "Start menu" SectionStart
         SetOutPath "$INSTDIR\" # this affects CreateShortCut's 'Start in' directory
-        CreateShortCut "$SMPROGRAMS\${prodname}\${prodname}.lnk" "$INSTDIR\${prodname}.exe"
+        CreateShortCut "$SMPROGRAMS\${prodname}\${prodname}.lnk" "$INSTDIR\${prodname}.exe" \
+            "" "$INSTDIR\${prodname}.exe"
         CreateShortCut "$SMPROGRAMS\${prodname}\${prodname} No UAC.lnk" \
             "$INSTDIR\${prodname}.exe" \
-            "--no-uac --gui"
+            "--no-uac --gui" "$INSTDIR\${prodname}.exe"
         CreateShortCut "$SMPROGRAMS\${prodname}\${prodname} Debugging Terminal.lnk" \
-            "$INSTDIR\${prodname}_console.exe"
+            "$INSTDIR\${prodname}_console.exe" "" "$INSTDIR\${prodname}.exe"
         Call RefreshShellIcons
         WriteINIStr "$SMPROGRAMS\${prodname}\${prodname} Home Page.url" "InternetShortcut" "URL" "https://www.bleachbit.org/"
     SectionEnd
@@ -372,9 +383,9 @@ SectionEnd
 !ifndef NoSectionShred
   Section "Integrate Shred" SectionShred
     ; Register Windows Explorer Shell Extension (Shredder)
-    WriteRegStr HKCR "AllFileSystemObjects\shell\shred.bleachbit" "" 'Shred with BleachBit'
-    WriteRegStr HKCR "AllFileSystemObjects\shell\shred.bleachbit" "Icon" "$INSTDIR\bleachbit.exe,0"
-    WriteRegStr HKCR "AllFileSystemObjects\shell\shred.bleachbit\command" "" '"$INSTDIR\bleachbit.exe" --gui --no-uac --shred "%1"'
+    WriteRegStr HKCR "${SHRED_REGEX_KEY}" "" 'Shred with BleachBit'
+    WriteRegStr HKCR "${SHRED_REGEX_KEY}" "Icon" "$INSTDIR\bleachbit.exe,0"
+    WriteRegStr HKCR "${SHRED_REGEX_KEY}\command" "" '"$INSTDIR\bleachbit.exe" --gui --shred --exit """%1"""'
   SectionEnd
 !endif
 

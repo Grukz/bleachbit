@@ -3,7 +3,7 @@
 
 
 # BleachBit
-# Copyright (C) 2008-2020 Andrew Ziem
+# Copyright (C) 2008-2021 Andrew Ziem
 # https://www.bleachbit.org
 #
 # This program is free software: you can redistribute it and/or modify
@@ -27,9 +27,8 @@ Preferences dialog
 from bleachbit import _, _p, online_update_notification_enabled
 from bleachbit.Options import options
 from bleachbit import GuiBasic
-import bleachbit.GUI
 
-from gi.repository import Gtk, Gdk
+from gi.repository import Gtk
 import logging
 import os
 
@@ -95,7 +94,7 @@ class PreferencesDialog:
         if 'auto_hide' == path:
             self.refresh_operations = True
         if 'dark_mode' == path:
-            if options.get('win10_theme'):
+            if 'nt' == os.name and options.get('win10_theme'):
                 self.cb_set_windows10_theme()
             Gtk.Settings.get_default().set_property(
                 'gtk-application-prefer-dark-theme', options.get('dark_mode'))

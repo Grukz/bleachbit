@@ -1,7 +1,7 @@
 # vim: ts=4:sw=4:expandtab
 
 # BleachBit
-# Copyright (C) 2008-2020 Andrew Ziem
+# Copyright (C) 2008-2021 Andrew Ziem
 # https://www.bleachbit.org
 #
 # This program is free software: you can redistribute it and/or modify
@@ -293,10 +293,12 @@ class WorkerTestCase(common.BleachbitTestCase):
         parent = self
 
         class MyDeepScan:
-            def add_search(self, dirname, regex):
-                parent.assertEqual(dirname, os.path.expanduser('~'))
-                parent.assertIn(
-                    regex, ['^Thumbs\\.db$', '^Thumbs\\.db:encryptable$'])
+            def __init__(self, searches):
+                for (path, searches) in searches.items():
+                    parent.assertEqual(path, os.path.expanduser('~'))
+                    for s in searches:
+                        parent.assertIn(
+                            s.regex, ['^Thumbs\\.db$', '^Thumbs\\.db:encryptable$'])
 
             def scan(self):
                 parent.scanned += 1

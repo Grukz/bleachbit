@@ -1,7 +1,7 @@
 # vim: ts=4:sw=4:expandtab
 
 # BleachBit
-# Copyright (C) 2008-2020 Andrew Ziem
+# Copyright (C) 2008-2021 Andrew Ziem
 # https://www.bleachbit.org
 #
 # This program is free software: you can redistribute it and/or modify
@@ -29,6 +29,7 @@ import logging
 import os.path
 
 logger = logging.getLogger(__name__)
+
 
 def __get_chrome_history(path, fn='History'):
     """Get Google Chrome or Chromium history version.  'path' is name of any file in same directory"""
@@ -179,7 +180,8 @@ def delete_chrome_favicons(path):
 def delete_chrome_history(path):
     """Clean history from History and Favicon files without affecting bookmarks"""
     if not os.path.exists(path):
-        logger.debug('aborting delete_chrome_history() because history does not exist: %s' % path)
+        logger.debug(
+            'aborting delete_chrome_history() because history does not exist: %s' % path)
         return
     cols = ('url', 'title')
     where = ""
@@ -242,7 +244,7 @@ def delete_office_registrymodifications(path):
         node.unlink()
         modified = True
     if modified:
-        with open(path, 'w') as xml_file:
+        with open(path, 'w', encoding='utf-8') as xml_file:
             dom1.writexml(xml_file)
 
 
@@ -260,6 +262,9 @@ def delete_mozilla_url_history(path):
     cols = ('url', 'rev_host', 'title')
     cmds += __shred_sqlite_char_columns('moz_places', cols, places_suffix)
 
+    # For any bookmarks that remain in moz_places, reset the non-character values.
+    cmds += "update moz_places set visit_count=0, frecency=-1, last_visit_date=null;"
+
     # delete any orphaned annotations in moz_annos
     annos_suffix = "where id in (select moz_annos.id " \
         "from moz_annos " \
@@ -270,21 +275,32 @@ def delete_mozilla_url_history(path):
     cmds += __shred_sqlite_char_columns(
         'moz_annos', ('content', ), annos_suffix)
 
-    # delete any orphaned favicons
-    fav_suffix = "where id not in (select favicon_id " \
-        "from moz_places where favicon_id is not null ); "
-
+    # Delete any orphaned favicons.
+    # Firefox 78 no longer has a table named moz_favicons, and it no longer has
+    # a column favicon_id in the table moz_places. (This change probably happened before version 78.)
     if __sqlite_table_exists(path, 'moz_favicons'):
+        fav_suffix = "where id not in (select favicon_id " \
+            "from moz_places where favicon_id is not null ); "
         cols = ('url', 'data')
         cmds += __shred_sqlite_char_columns('moz_favicons', cols, fav_suffix)
 
-    # delete any orphaned history visits
-    cmds += "delete from moz_historyvisits where place_id not " \
-        "in (select id from moz_places where id is not null); "
+    # Delete orphaned origins.
+    if __sqlite_table_exists(path, 'moz_origins'):
+        origins_where = 'where id not in (select distinct origin_id from moz_places)'
+        cmds += __shred_sqlite_char_columns('moz_origins',
+                                            ('host',), origins_where)
+        # For any remaining origins, reset the statistic.
+        cmds += "update moz_origins set frecency=-1;"
+
+    if __sqlite_table_exists(path, 'moz_meta'):
+        cmds += "delete from moz_meta where key like 'origin_frecency_%';"
+
+    # Delete all history visits.
+    cmds += "delete from moz_historyvisits;"
 
     # delete any orphaned input history
     input_suffix = "where place_id not in (select distinct id from moz_places)"
-    cols = ('input', )
+    cols = ('input',)
     cmds += __shred_sqlite_char_columns('moz_inputhistory', cols, input_suffix)
 
     # delete the whole moz_hosts table
@@ -296,6 +312,33 @@ def delete_mozilla_url_history(path):
         cmds += "delete from moz_hosts;"
 
     # execute the commands
+    FileUtilities.execute_sqlite3(path, cmds)
+
+
+def delete_mozilla_favicons(path):
+    """Delete favorites icon in Mozilla places.favicons only if they are not bookmarks (Firefox 3 and family)"""
+
+    cmds = ""
+
+    places_path = os.path.join(os.path.dirname(path), 'places.sqlite')
+    cmds += "attach database \"%s\" as places;" % places_path
+
+    # delete all not bookmarked icon urls
+    urls_where = (
+        "where page_url not in (select url from places.moz_places where id in "
+        "(select distinct fk from places.moz_bookmarks where fk is not null))"
+    )
+    cmds += __shred_sqlite_char_columns('moz_pages_w_icons', ('page_url',), urls_where)
+
+    # delete all not bookmarked icons to pages mapping
+    mapping_where = "where page_id not in (select id from moz_pages_w_icons)"
+    cmds += __shred_sqlite_char_columns('moz_icons_to_pages', where=mapping_where)
+
+    # delete all not bookmarked icons
+    icons_where = "where (id not in (select icon_id from moz_icons_to_pages))"
+    cols = ('icon_url', 'data')
+    cmds += __shred_sqlite_char_columns('moz_icons', cols, where=icons_where)
+
     FileUtilities.execute_sqlite3(path, cmds)
 
 
@@ -312,7 +355,7 @@ def delete_ooo_history(path):
                 changed = True
                 break
     if changed:
-        dom1.writexml(open(path, "w"))
+        dom1.writexml(open(path, "w", encoding='utf-8'))
 
 
 def get_chrome_bookmark_ids(history_path):
@@ -334,7 +377,7 @@ def get_chrome_bookmark_urls(path):
     import json
 
     # read file to parser
-    with open(path, 'r') as f:
+    with open(path, 'r', encoding='utf-8') as f:
         js = json.load(f)
 
     # empty list

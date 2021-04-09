@@ -2,7 +2,7 @@
 # coding=utf-8
 
 # BleachBit
-# Copyright (C) 2008-2020 Andrew Ziem
+# Copyright (C) 2008-2021 Andrew Ziem
 # https://www.bleachbit.org
 #
 # This program is free software: you can redistribute it and/or modify
@@ -100,7 +100,8 @@ class CleanerTestCase(common.BleachbitTestCase):
             print(cmd)
             raise AssertionError('option2 should yield nothing')
         # should fail
-        self.assertRaises(RuntimeError, cleaner.get_commands('option3').__next__)
+        self.assertRaises(
+            RuntimeError, cleaner.get_commands('option3').__next__)
 
     def test_auto_hide(self):
         for key in sorted(backends):

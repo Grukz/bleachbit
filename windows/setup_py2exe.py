@@ -1,6 +1,6 @@
 """
 BleachBit
-Copyright (C) 2008-2020 Andrew Ziem
+Copyright (C) 2008-2021 Andrew Ziem
 https://www.bleachbit.org
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -26,6 +26,7 @@ import subprocess
 import sys
 import time
 import win_unicode_console
+import xml.dom.minidom
 
 setup_encoding = sys.stdout.encoding
 win_unicode_console.enable()
@@ -52,6 +53,7 @@ BB_VER = None
 GTK_DIR = sys.exec_prefix + '\\Lib\\site-packages\\gnome\\'
 NSIS_EXE = 'C:\\Program Files (x86)\\NSIS\\makensis.exe'
 NSIS_ALT_EXE = 'C:\\Program Files\\NSIS\\makensis.exe'
+SHRED_REGEX_KEY = 'AllFilesystemObjects\\shell\\shred.bleachbit'
 if not os.path.exists(NSIS_EXE) and os.path.exists(NSIS_ALT_EXE):
     logger.info('NSIS found in alternate location: ' + NSIS_ALT_EXE)
     NSIS_EXE = NSIS_ALT_EXE
@@ -197,6 +199,19 @@ def environment_check():
     logger.info('Checking for NSIS')
     check_exist(
         NSIS_EXE, 'NSIS executable not found: will try to build portable BleachBit')
+    
+    
+def remove_windir_from_fonts_conf():
+    filepath = 'dist\\etc\\fonts\\fonts.conf'
+    dom = xml.dom.minidom.parse(filepath)
+    fc_element = dom.getElementsByTagName('fontconfig')[0]
+    for dir_element in fc_element.getElementsByTagName('dir'):
+        if dir_element.firstChild.nodeValue == 'WINDOWSFONTDIR':
+            fc_element.removeChild(dir_element)
+            break
+        
+    with open(filepath, 'w', encoding='utf-8') as xml_file:
+        dom.writexml(xml_file)
 
 
 def build():
@@ -217,10 +232,22 @@ def build():
     if not os.path.exists('dist'):
         os.makedirs('dist')
 
+    logger.info('Copying GTK helpers')
+    shutil.copyfile(os.path.join(GTK_DIR, 'gspawn-win32-helper.exe'),
+                    os.path.join('dist', 'gspawn-win32-helper.exe'))
+    shutil.copyfile(os.path.join(GTK_DIR, 'gspawn-win32-helper-console.exe'),
+                    os.path.join('dist', 'gspawn-win32-helper-console.exe'))
+
     logger.info('Copying GTK files and icon')
     copytree(GTK_DIR + '\\etc', 'dist\\etc')
     copytree(GTK_DIR + '\\lib', 'dist\\lib')
-    for subpath in ['fontconfig', 'fonts', 'icons', 'themes']:
+    
+    logger.info('Remove windows fonts dir from fonts.conf file')
+    # We don't want fontconfig to caches the Windows Fonts dir
+    remove_windir_from_fonts_conf()
+    
+    # fonts are not needed https://github.com/bleachbit/bleachbit/issues/863
+    for subpath in ['fontconfig', 'icons', 'themes']:
         copytree(os.path.join(GTK_DIR, 'share', subpath),
                  'dist\\share\\' + subpath)
     SCHEMAS_DIR = 'share\\glib-2.0\\schemas'
@@ -538,7 +565,7 @@ def nsis(opts, exe_name, nsi_path):
         logger.info('Deleting old file: ' + exe_name)
         os.remove(exe_name)
     cmd = NSIS_EXE + \
-        ' {} /DVERSION={} {}'.format(opts, BB_VER, nsi_path)
+        ' {} /DVERSION={} /DSHRED_REGEX_KEY={} {}'.format(opts, BB_VER, SHRED_REGEX_KEY, nsi_path)
     run_cmd(cmd)
     assert_exist(exe_name)
     sign_code(exe_name)
@@ -563,7 +590,7 @@ def package_installer(nsi_path=r'windows\bleachbit.nsi'):
         # Was:
         # nsis('/DNoTranslations',
         # Now: Compression gets now done in NSIS file!
-        nsis('/V3 /DNoTranslations /Dpackhdr /DCompressor',
+        nsis(opts + ' /DNoTranslations',
              'windows\\BleachBit-{0}-setup-English.exe'.format(BB_VER),
              nsi_path)
 

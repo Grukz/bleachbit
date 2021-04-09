@@ -2,7 +2,7 @@
 # -*- coding: UTF-8 -*-
 
 # BleachBit
-# Copyright (C) 2008-2020 Andrew Ziem
+# Copyright (C) 2008-2021 Andrew Ziem
 # https://www.bleachbit.org
 #
 # This program is free software: you can redistribute it and/or modify
@@ -26,6 +26,8 @@ Test case for module Unix
 from tests import common
 from bleachbit.Unix import *
 
+import io
+import mock
 import os
 import sys
 import unittest
@@ -118,6 +120,22 @@ root               531   0.0  0.0  2501712    588   ??  Ss   20May16   0:02.40 s
                 # On Travis running Xenial, there is a permissions error.
                 if common.have_root():
                     raise rte
+
+    def test_journald_regex(self):
+        """Test the regex for journald_clean()"""
+        positive_cases = ('Vacuuming done, freed 0B of archived journals on disk.',
+                          'Vacuuming done, freed 1K of archived journals on disk.',
+                          'Vacuuming done, freed 100.0M of archived journals on disk.',
+                          'Vacuuming done, freed 1G of archived journals on disk.',
+                          'Vacuuming done, freed 0B of archived journals from /run/log/journal.',
+                          'Vacuuming done, freed 1.0G of archived journals from /var/log/journal/123abc.')
+        regex = re.compile(JOURNALD_REGEX)
+        for pos in positive_cases:
+            self.assertTrue(regex.match(pos))
+        negative_cases = ('Deleted archived journal /var/log/journal/123/system@123-123.journal~ (56.0M).',
+                          'Archived and active journals take up 100.0M on disk.')
+        for neg in negative_cases:
+            self.assertFalse(regex.match(neg))
 
     def test_locale_regex(self):
         """Unit test for locale_to_language()"""
@@ -261,8 +279,8 @@ root               531   0.0  0.0  2501712    588   ??  Ss   20May16   0:02.40 s
             bleachbit.logger.debug('dnf bytes cleaned %d', bytes_freed)
 
     @common.skipIfWindows
-    def test_dnf_autoremove(self):
-        """Unit test for dnf_autoremove()"""
+    def test_dnf_autoremove_real(self):
+        """Unit test for dnf_autoremove() with real dnf"""
         if 0 != os.geteuid() or os.path.exists('/var/run/dnf.pid') \
                 or not FileUtilities.exe_exists('dnf'):
             self.assertRaises(RuntimeError, dnf_clean)
@@ -270,3 +288,24 @@ root               531   0.0  0.0  2501712    588   ??  Ss   20May16   0:02.40 s
             bytes_freed = dnf_autoremove()
             self.assertIsInteger(bytes_freed)
             bleachbit.logger.debug('dnf bytes cleaned %d', bytes_freed)
+
+    @common.skipIfWindows
+    @mock.patch('bleachbit.Unix.os.path')
+    @mock.patch('bleachbit.General.run_external')
+    def test_dnf_autoremove_mock(self, mock_run, mock_path):
+        """Unit test for dnf_autoremove() with mock"""
+        mock_path.exists.return_value = True
+        self.assertRaises(RuntimeError, dnf_autoremove)
+
+        mock_path.exists.return_value = False
+        mock_run.return_value = (1, 'stdout', 'stderr')
+        self.assertRaises(RuntimeError, dnf_autoremove)
+
+        mock_run.return_value = (0, 'Nothing to do.', 'stderr')
+        bytes_freed = dnf_autoremove()
+        self.assertEqual(bytes_freed, 0)
+
+        mock_run.return_value = (
+            0, 'Remove  112 Packages\nFreed space: 299 M\n', 'stderr')
+        bytes_freed = dnf_autoremove()
+        self.assertEqual(bytes_freed, 299000000)

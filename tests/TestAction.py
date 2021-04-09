@@ -2,7 +2,7 @@
 # coding=utf-8
 
 # BleachBit
-# Copyright (C) 2008-2020 Andrew Ziem
+# Copyright (C) 2008-2021 Andrew Ziem
 # https://www.bleachbit.org
 #
 # This program is free software: you can redistribute it and/or modify
@@ -279,7 +279,7 @@ class ActionTestCase(common.BleachbitTestCase):
             # If exception occurs in logger `handleError` is called.
             with mock.patch.object(logging.Handler, 'handleError') as MockHandleError:
                 try:
-                    # When GtkLoggerHandler is used the exeptions are raised directly
+                    # When GtkLoggerHandler is used the exceptions are raised directly
                     # and handleError is not called
                     self._test_action_str(
                         ActionTestCase._TEST_PROCESS_SIMPLE % ActionTestCase._TEST_PROCESS_CMDS[os.name])

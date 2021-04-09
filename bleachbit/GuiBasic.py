@@ -1,7 +1,7 @@
 # vim: ts=4:sw=4:expandtab
 
 # BleachBit
-# Copyright (C) 2008-2020 Andrew Ziem
+# Copyright (C) 2008-2021 Andrew Ziem
 # https://www.bleachbit.org
 #
 # This program is free software: you can redistribute it and/or modify
@@ -193,5 +193,8 @@ def open_url(url, parent_window=None, prompt=True):
         # handling this file'
         import webbrowser
         webbrowser.open(url)
+    elif (Gtk.get_major_version(), Gtk.get_minor_version()) < (3, 22):
+        # Ubuntu 16.04 LTS ships with GTK 3.18
+        Gtk.show_uri(None, url, Gdk.CURRENT_TIME)
     else:
         Gtk.show_uri_on_window(parent_window, url, Gdk.CURRENT_TIME)

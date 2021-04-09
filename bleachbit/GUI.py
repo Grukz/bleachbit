@@ -1,8 +1,8 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 # vim: ts=4:sw=4:expandtab
 
 # BleachBit
-# Copyright (C) 2008-2020 Andrew Ziem
+# Copyright (C) 2008-2021 Andrew Ziem
 # https://www.bleachbit.org
 #
 # This program is free software: you can redistribute it and/or modify
@@ -31,7 +31,7 @@ from bleachbit.Cleaner import backends, register_cleaners
 import bleachbit
 from gi.repository import Gtk, Gdk, GObject, GLib, Gio
 
-
+import glob
 import logging
 import os
 import sys
@@ -116,17 +116,26 @@ class Bleachbit(Gtk.Application):
     _auto_exit = False
 
     def __init__(self, uac=True, shred_paths=None, auto_exit=False):
-        if uac and os.name == 'nt' and Windows.elevate_privileges():
+        if os.name == 'nt' and Windows.elevate_privileges(uac):
             # privileges escalated in other process
             sys.exit(0)
         Gtk.Application.__init__(
             self, application_id='org.gnome.Bleachbit', flags=Gio.ApplicationFlags.FLAGS_NONE)
         GObject.threads_init()
+        
+        if auto_exit:
+            # This is used for automated testing of whether the GUI can start.
+            # It is called from assert_execute_console() in windows/setup_py2exe.py
+            self._auto_exit = True        
 
         if shred_paths:
             self._shred_paths = shred_paths
             return
         if os.name == 'nt':
+            # clean up nonce files https://github.com/bleachbit/bleachbit/issues/858
+            import atexit
+            atexit.register(Windows.cleanup_nonce)
+
             # BitDefender false positive.  BitDefender didn't mark BleachBit as infected or show
             # anything in its log, but sqlite would fail to import unless BitDefender was in "game mode."
             # https://www.bleachbit.org/forum/074-fails-errors
@@ -135,9 +144,6 @@ class Bleachbit(Gtk.Application):
             except ImportError:
                 logger.exception(
                     _("Error loading the SQLite module: the antivirus software may be blocking it."))
-        if auto_exit:
-            # This is used for automated testing of whether the GUI can start.
-            self._auto_exit = True
 
     def build_app_menu(self):
         """Build the application menu
@@ -230,6 +236,10 @@ class Bleachbit(Gtk.Application):
             # in portable mode on Windows, the options directory includes
             # executables
             paths.append(bleachbit.options_file)
+            if os.path.isdir(bleachbit.personal_cleaners_dir):
+                paths.append(bleachbit.personal_cleaners_dir)
+            for f in glob.glob(os.path.join(bleachbit.options_dir, "*.bz2")):
+                paths.append(f)
         else:
             paths.append(bleachbit.options_dir)
 
@@ -239,14 +249,14 @@ class Bleachbit(Gtk.Application):
             # aborted
             return
 
-        # in portable mode, rebuild a minimal bleachbit.ini
-        bleachbit.Options.init_configuration()
-
         # Quit the application through the idle loop to allow the worker
         # to delete the files.  Use the lowest priority because the worker
-        # uses the standard priority.  Otherwise, this will quit before
+        # uses the standard priority. Otherwise, this will quit before
         # the files are deleted.
-        GLib.idle_add(self.quit, priority=GObject.PRIORITY_LOW)
+        #
+        # Rebuild a minimal bleachbit.ini when quitting
+        GLib.idle_add(self.quit, None, None, True,
+                      priority=GObject.PRIORITY_LOW)
 
     def cb_wipe_free_space(self, action, param):
         """callback to wipe free space in arbitrary folder"""
@@ -276,7 +286,7 @@ class Bleachbit(Gtk.Application):
 
     def get_about_dialog(self):
         dialog = Gtk.AboutDialog(comments='Program to clean unnecessary files',
-                                 copyright='Copyright (C) 2008-2020 Andrew Ziem',
+                                 copyright='Copyright (C) 2008-2021 Andrew Ziem',
                                  program_name=APP_NAME,
                                  version=bleachbit.APP_VERSION,
                                  website=bleachbit.APP_URL,
@@ -309,7 +319,9 @@ class Bleachbit(Gtk.Application):
         Gtk.Application.do_startup(self)
         self.build_app_menu()
 
-    def quit(self, _action=None, _param=None):
+    def quit(self, _action=None, _param=None, init_configuration=False):
+        if init_configuration:
+            bleachbit.Options.init_configuration()
         self._window.destroy()
 
     def get_diagnostics_dialog(self):
@@ -347,13 +359,15 @@ class Bleachbit(Gtk.Application):
             self._window = GUI(
                 application=self, title=APP_NAME, auto_exit=self._auto_exit)
         self._window.present()
-        if self._auto_exit:
+        if self._shred_paths:
+            GLib.idle_add(GUI.shred_paths, self._window, self._shred_paths, priority=GObject.PRIORITY_LOW)
+            # When we shred paths and auto exit with the Windows Explorer context menu command we close the
+            # application in GUI.shred_paths, because if it is closed from here there are problems.
+            # Most probably this is something related with how GTK handles idle quit calls.
+        elif self._auto_exit:
             GLib.idle_add(self.quit,
                           priority=GObject.PRIORITY_LOW)
             print('Success')
-        if self._shred_paths:
-            GLib.idle_add(GUI.shred_paths, self._window, self._shred_paths, False, True,
-                          priority=GObject.PRIORITY_LOW)
 
 
 class TreeInfoModel:
@@ -457,7 +471,7 @@ class TreeDisplayModel:
         return self.view
 
     def set_cleaner(self, path, model, parent_window, value):
-        """Activate or deactive option of cleaner."""
+        """Activate or deactivate option of cleaner."""
         assert isinstance(value, bool)
         assert isinstance(model, Gtk.TreeStore)
         cleaner_id = None
@@ -526,7 +540,7 @@ class GUI(Gtk.ApplicationWindow):
     def __init__(self, auto_exit, *args, **kwargs):
         super(GUI, self).__init__(*args, **kwargs)
 
-        self.auto_exit = auto_exit
+        self._auto_exit = auto_exit
 
         self.set_wmclass(APP_NAME, APP_NAME)
         self.populate_window()
@@ -556,21 +570,23 @@ class GUI(Gtk.ApplicationWindow):
 
         GLib.idle_add(self.cb_refresh_operations)
 
+    def _confirm_delete(self, mention_preview, shred_settings=False):
+        if options.get("delete_confirmation"):
+            return GuiBasic.delete_confirmation_dialog(self, mention_preview, shred_settings=shred_settings)
+        return True
+
     def get_preferences_dialog(self):
         return PreferencesDialog(
             self,
             self.cb_refresh_operations,
             self.set_windows10_theme)
 
-    def shred_paths(self, paths, shred_settings=False, quit_when_done=False):
+    def shred_paths(self, paths, shred_settings=False):
         """Shred file or folders
 
         When shredding_settings=True:
         If user confirms to delete, then returns True.  If user aborts, returns
         False.
-
-        When quit_when_done=True:
-        Always returns False to remove function from the idle queue.
         """
         # create a temporary cleaner object
         backends['_gui'] = Cleaner.create_simple_cleaner(paths)
@@ -579,15 +595,15 @@ class GUI(Gtk.ApplicationWindow):
         operations = {'_gui': ['files']}
         self.preview_or_run_operations(False, operations)
 
-        if GuiBasic.delete_confirmation_dialog(self, mention_preview=False, shred_settings=shred_settings):
+        if self._confirm_delete(False, shred_settings):
             # delete
             self.preview_or_run_operations(True, operations)
             if shred_settings:
                 return True
 
-        if quit_when_done:
+        if self._auto_exit:
             GLib.idle_add(self.close,
-                          priority=GObject.PRIORITY_LOW)
+                              priority=GObject.PRIORITY_LOW)
 
         # user aborted
         return False
@@ -683,10 +699,8 @@ class GUI(Gtk.ApplicationWindow):
         # Disable delete confirmation message.
         # if the option is selected under preference.
 
-        if options.get("delete_confirmation"):
-            if not GuiBasic.delete_confirmation_dialog(self, True):
-                return
-        self.preview_or_run_operations(True)
+        if self._confirm_delete(True):
+            self.preview_or_run_operations(True)
 
     def preview_or_run_operations(self, really_delete, operations=None):
         """Preview operations or run operations (delete files)"""
@@ -714,7 +728,7 @@ class GUI(Gtk.ApplicationWindow):
         else:
             self.start_time = time.time()
             worker = self.worker.run()
-            GLib.idle_add(worker.__next__, priority=GLib.PRIORITY_LOW)
+            GLib.idle_add(worker.__next__)
 
     def worker_done(self, worker, really_delete):
         """Callback for when Worker is done"""
@@ -755,7 +769,7 @@ class GUI(Gtk.ApplicationWindow):
     def cb_refresh_operations(self):
         """Callback to refresh the list of cleaners"""
         # Is this the first time in this session?
-        if not hasattr(self, 'recognized_cleanerml') and not self.auto_exit:
+        if not hasattr(self, 'recognized_cleanerml') and not self._auto_exit:
             from bleachbit import RecognizeCleanerML
             RecognizeCleanerML.RecognizeCleanerML()
             self.recognized_cleanerml = True
@@ -776,7 +790,7 @@ class GUI(Gtk.ApplicationWindow):
         self.view.expand_all()
 
         # Check for online updates.
-        if not self.auto_exit and \
+        if not self._auto_exit and \
             bleachbit.online_update_notification_enabled and \
             options.get("check_online_updates") and \
                 not hasattr(self, 'checked_for_updates'):
@@ -785,7 +799,7 @@ class GUI(Gtk.ApplicationWindow):
 
         # Show information for first start.
         # (The first start flag is set also for each new version.)
-        if options.get("first_start") and not self.auto_exit:
+        if options.get("first_start") and not self._auto_exit:
             if os.name == 'posix':
                 self.append_text(
                     _('Access the application menu by clicking the hamburger icon on the title bar.'))
@@ -830,7 +844,7 @@ class GUI(Gtk.ApplicationWindow):
             return
 
         # delete
-        if GuiBasic.delete_confirmation_dialog(self, mention_preview=False):
+        if self._confirm_delete(False):
             self.preview_or_run_operations(True, operations)
             return
 
@@ -851,7 +865,7 @@ class GUI(Gtk.ApplicationWindow):
         # context menu applies only to children, not parents
         if len(path) != 2:
             return False
-        # find the seleted option
+        # find the selected option
         model = treeview.get_model()
         option_id = model[path][2]
         cleaner_id = model[path[0]][2]
@@ -1007,20 +1021,22 @@ class GUI(Gtk.ApplicationWindow):
         return hbar
 
     def on_configure_event(self, widget, event):
-        # fixup maximized window position:
-        # on Windows if a window is maximized on a secondary monitor it is moved off the screen
         (x, y) = self.get_position()
         (width, height) = self.get_size()
-        window = self.get_window()
-        if window.get_state() & Gdk.WindowState.MAXIMIZED != 0:
-            screen = self.get_screen()
-            monitor_num = screen.get_monitor_at_window(window)
-            g = screen.get_monitor_geometry(monitor_num)
-            if x < g.x or x >= g.x + g.width or y < g.y or y >= g.y + g.height:
-                logger.info("Maximized window {}+{}: monitor ({}) geometry = {}+{}".format(
-                    (x, y), (width, height), monitor_num, (g.x, g.y), (g.width, g.height)))
-                self.move(g.x, g.y)
-                return True
+
+        # fixup maximized window position:
+        # on Windows if a window is maximized on a secondary monitor it is moved off the screen
+        if 'nt' == os.name:
+            window = self.get_window()
+            if window.get_state() & Gdk.WindowState.MAXIMIZED != 0:
+                screen = self.get_screen()
+                monitor_num = screen.get_monitor_at_window(window)
+                g = screen.get_monitor_geometry(monitor_num)
+                if x < g.x or x >= g.x + g.width or y < g.y or y >= g.y + g.height:
+                    logger.debug("Maximized window {}+{}: monitor ({}) geometry = {}+{}".format(
+                        (x, y), (width, height), monitor_num, (g.x, g.y), (g.width, g.height)))
+                    self.move(g.x, g.y)
+                    return True
 
         # save window position and size
         options.set("window_x", x, commit=False)
@@ -1059,7 +1075,7 @@ class GUI(Gtk.ApplicationWindow):
             # is within the closest monitor
             if r.x >= g.x and r.x < g.x + g.width and \
                r.y >= g.y and r.y < g.y + g.height:
-                logger.info("closest monitor ({}) geometry = {}+{}, window geometry = {}+{}".format(
+                logger.debug("closest monitor ({}) geometry = {}+{}, window geometry = {}+{}".format(
                     monitor_num, (g.x, g.y), (g.width, g.height), (r.x, r.y), (r.width, r.height)))
                 self.move(r.x, r.y)
                 self.resize(r.width, r.height)

@@ -2,7 +2,7 @@
 # -*- coding: UTF-8 -*-
 
 # BleachBit
-# Copyright (C) 2008-2020 Andrew Ziem
+# Copyright (C) 2008-2021 Andrew Ziem
 # https://www.bleachbit.org
 #
 # This program is free software: you can redistribute it and/or modify
@@ -32,7 +32,7 @@ import platform
 from bleachbit import Log
 from configparser import RawConfigParser, NoOptionError, SafeConfigParser
 
-APP_VERSION = "3.9.2"
+APP_VERSION = "4.3.0"
 APP_NAME = "BleachBit"
 APP_URL = "https://www.bleachbit.org"
 
@@ -94,6 +94,7 @@ options_dir = None
 if 'posix' == os.name:
     options_dir = os.path.expanduser("~/.config/bleachbit")
 elif 'nt' == os.name:
+    os.environ.pop('FONTCONFIG_FILE', None)
     if os.path.exists(os.path.join(bleachbit_exe_path, 'bleachbit.ini')):
         # portable mode
         portable_mode = True
@@ -264,7 +265,7 @@ GETTEXT_CONTEXT_GLUE = "\004"
 def pgettext(msgctxt, msgid):
     """A custom implementation of GNU pgettext().
     """
-    if msgctxt is not None and msgctxt is not "":
+    if msgctxt is not None and msgctxt != "":
         translation = _(msgctxt + GETTEXT_CONTEXT_GLUE + msgid)
         if translation.startswith(msgctxt + GETTEXT_CONTEXT_GLUE):
             return msgid
@@ -303,3 +304,8 @@ if 'posix' == os.name:
     for varname, value in envs.items():
         if not os.getenv(varname):
             os.environ[varname] = value
+
+if 'posix' == os.name:
+    fs_scan_re_flags = 0 # should be re.IGNORECASE on macOS
+else:
+    fs_scan_re_flags = re.IGNORECASE

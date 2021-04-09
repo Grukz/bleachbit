@@ -1,7 +1,7 @@
 # vim: ts=4:sw=4:expandtab
 
 # BleachBit
-# Copyright (C) 2008-2020 Andrew Ziem
+# Copyright (C) 2008-2021 Andrew Ziem
 # https://www.bleachbit.org
 #
 # This program is free software: you can redistribute it and/or modify
@@ -43,7 +43,6 @@ from bleachbit import Command, FileUtilities, General
 import glob
 import logging
 import os
-import re
 import sys
 
 from decimal import Decimal
@@ -55,7 +54,7 @@ if 'win32' == sys.platform:
     import win32con
     import win32file
     import win32gui
-    import win32process
+    import win32security
 
     from ctypes import windll, c_ulong, c_buffer, byref, sizeof
     from win32com.shell import shell, shellcon
@@ -120,6 +119,13 @@ def browse_folder(_, title):
         return None
     fullpath = shell.SHGetPathFromIDListW(pidl)
     return fullpath
+
+
+def cleanup_nonce():
+    """On exit, clean up GTK junk files"""
+    for fn in glob.glob(os.path.expandvars('%TEMP%\gdbus-nonce-file-*')):
+        logger.debug('cleaning GTK nonce file: %s', fn)
+        FileUtilities.delete(fn)
 
 
 def csidl_to_environ(varname, csidl):
@@ -202,25 +208,36 @@ def delete_registry_key(parent_key, really_delete):
 
 def delete_updates():
     """Returns commands for deleting Windows Updates files"""
-    windir = os.path.expandvars('$windir')
+    windir = os.path.expandvars('%windir%')
     dirs = glob.glob(os.path.join(windir, '$NtUninstallKB*'))
-    dirs += [os.path.expandvars('$windir\\SoftwareDistribution\\Download')]
-    dirs += [os.path.expandvars('$windir\\ie7updates')]
-    dirs += [os.path.expandvars('$windir\\ie8updates')]
+    dirs += [os.path.expandvars(r'%windir%\SoftwareDistribution')]
+    dirs += [os.path.expandvars(r'%windir%\SoftwareDistribution.old')]
+    dirs += [os.path.expandvars(r'%windir%\SoftwareDistribution.bak')]
+    dirs += [os.path.expandvars(r'%windir%\ie7updates')]
+    dirs += [os.path.expandvars(r'%windir%\ie8updates')]
+    dirs += [os.path.expandvars(r'%windir%\system32\catroot2')]
     if not dirs:
         # if nothing to delete, then also do not restart service
         return
 
-    import win32serviceutil
-    wu_running = win32serviceutil.QueryServiceStatus('wuauserv')[1] == 4
+    args = []
 
-    args = ['net', 'stop', 'wuauserv']
-
-    def wu_service():
+    def run_wu_service():
         General.run_external(args)
         return 0
-    if wu_running:
-        yield Command.Function(None, wu_service, " ".join(args))
+
+    services = {}
+    all_services = ('wuauserv', 'cryptsvc', 'bits', 'msiserver')
+    for service in all_services:
+        import win32serviceutil
+        services[service] = win32serviceutil.QueryServiceStatus(service)[
+            1] == 4
+        logger.debug('Windows service {} has current state: {}'.format(
+            service, services[service]))
+
+        if services[service]:
+            args = ['net', 'stop', service]
+            yield Command.Function(None, run_wu_service, " ".join(args))
 
     for path1 in dirs:
         for path2 in FileUtilities.children_in_directory(path1, True):
@@ -228,9 +245,10 @@ def delete_updates():
         if os.path.exists(path1):
             yield Command.Delete(path1)
 
-    args = ['net', 'start', 'wuauserv']
-    if wu_running:
-        yield Command.Function(None, wu_service, " ".join(args))
+    for this_service in all_services:
+        if services[this_service]:
+            args = ['net', 'start', this_service]
+            yield Command.Function(None, run_wu_service, " ".join(args))
 
 
 def detect_registry_key(parent_key):
@@ -253,13 +271,23 @@ def detect_registry_key(parent_key):
     return True
 
 
-def elevate_privileges():
+def elevate_privileges(uac):
     """On Windows Vista and later, try to get administrator
     privileges.  If successful, return True (so original process
     can exit).  If failed or not applicable, return False."""
 
     if shell.IsUserAnAdmin():
         logger.debug('already an admin (UAC not required)')
+        htoken = win32security.OpenProcessToken(
+            win32api.GetCurrentProcess(), win32security.TOKEN_ADJUST_PRIVILEGES | win32security.TOKEN_QUERY)
+        newPrivileges = [
+            (win32security.LookupPrivilegeValue(None, "SeBackupPrivilege"), win32security.SE_PRIVILEGE_ENABLED),
+            (win32security.LookupPrivilegeValue(None, "SeRestorePrivilege"), win32security.SE_PRIVILEGE_ENABLED),
+        ]
+        win32security.AdjustTokenPrivileges(htoken, 0, newPrivileges)
+        win32file.CloseHandle(htoken)
+        return False
+    elif not uac:
         return False
 
     if hasattr(sys, 'frozen'):

@@ -1,7 +1,7 @@
 # vim: ts=4:sw=4:expandtab
 
 # BleachBit
-# Copyright (C) 2008-2020 Andrew Ziem
+# Copyright (C) 2008-2021 Andrew Ziem
 # https://www.bleachbit.org
 #
 # This program is free software: you can redistribute it and/or modify
@@ -108,7 +108,7 @@ from winioctlcon import (FSCTL_GET_RETRIEVAL_POINTERS,
                          FSCTL_SET_ZERO_DATA)
 from win32file import (GENERIC_READ, GENERIC_WRITE, FILE_BEGIN,
                        FILE_SHARE_READ, FILE_SHARE_WRITE,
-                       OPEN_EXISTING, CREATE_ALWAYS,
+                       OPEN_EXISTING, CREATE_ALWAYS, FILE_FLAG_BACKUP_SEMANTICS,
                        DRIVE_REMOTE, DRIVE_CDROM, DRIVE_UNKNOWN)
 from win32con import (FILE_ATTRIBUTE_ENCRYPTED,
                       FILE_ATTRIBUTE_COMPRESSED,
@@ -326,7 +326,7 @@ def check_extents(extents, volume_bitmap, allocated_extents=None):
             if check_mapped_bit(volume_bitmap, cluster):
                 count_allocated += 1
                 if allocated_extents is not None:
-                    allocated_extents.append(cluster)
+                    allocated_extents.append((cluster, cluster)) # Modified by Marvin [12/05/2020] The extents should have (start, end) format 
             else:
                 count_free += 1
 
@@ -399,7 +399,7 @@ def spike_cluster(volume_handle, cluster, tmp_file_path):
 # should look.
 def check_mapped_bit(volume_bitmap, lcn):
     assert isinstance(lcn, int)
-    mapped_bit = ord(volume_bitmap[lcn // 8])
+    mapped_bit = volume_bitmap[lcn // 8]
     bit_location = lcn % 8    # zero-based
     if bit_location > 0:
         mapped_bit = mapped_bit >> bit_location
@@ -432,8 +432,13 @@ def determine_win_version():
 # CreateFileW gives us Unicode support.
 def open_file(file_name, mode=GENERIC_READ):
     file_handle = CreateFileW(file_name, mode, 0, None,
-                              OPEN_EXISTING, 0, None)
+                              OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, None)
     return file_handle
+
+
+# Close file
+def close_file(file_handle):
+    CloseHandle(file_handle)
 
 
 # Get some basic information about a file.

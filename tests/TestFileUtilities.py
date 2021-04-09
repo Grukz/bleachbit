@@ -2,7 +2,7 @@
 # -*- coding: UTF-8 -*-
 
 # BleachBit
-# Copyright (C) 2008-2020 Andrew Ziem
+# Copyright (C) 2008-2021 Andrew Ziem
 # https://www.bleachbit.org
 #
 # This program is free software: you can redistribute it and/or modify
@@ -415,7 +415,7 @@ class FileUtilitiesTestCase(common.BleachbitTestCase):
         # set up
         def test_delete_locked_setup():
             (fd, filename) = tempfile.mkstemp(prefix='bleachbit-test-worker')
-            os.write(fd, '123')
+            os.write(fd, b'123')
             os.close(fd)
             self.assertExists(filename)
             self.assertEqual(3, getsize(filename))
@@ -477,7 +477,7 @@ class FileUtilitiesTestCase(common.BleachbitTestCase):
 
     def test_detect_encoding(self):
         """Unit test for detect_encoding"""
-        eat_glass='나는 유리를 먹을 수 있어요. 그래도 아프지 않아요'
+        eat_glass = '나는 유리를 먹을 수 있어요. 그래도 아프지 않아요'
         tests = (('This is just an ASCII file', 'ascii'),
                  (eat_glass, 'utf-8'),
                  (eat_glass, 'EUC-KR'))
@@ -862,7 +862,8 @@ class FileUtilitiesTestCase(common.BleachbitTestCase):
         """Unit test for wipe_delete()"""
 
         # create test file
-        filename = self.write_file('bleachbit-test-wipe', b'abcdefghij' * 12345)
+        filename = self.write_file(
+            'bleachbit-test-wipe', b'abcdefghij' * 12345)
 
         # wipe it
         wipe_contents(filename)
@@ -942,6 +943,9 @@ class FileUtilitiesTestCase(common.BleachbitTestCase):
         for ret in wipe_path(self.tempdir):
             # no idle handler
             pass
+
+    def test_wipe_path_fast(self):
+        next(wipe_path(self.tempdir, True))
 
     def test_vacuum_sqlite3(self):
         """Unit test for method vacuum_sqlite3()"""

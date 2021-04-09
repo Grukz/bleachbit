@@ -1,7 +1,7 @@
 # vim: ts=4:sw=4:expandtab
 
 # BleachBit
-# Copyright (C) 2008-2020 Andrew Ziem
+# Copyright (C) 2008-2021 Andrew Ziem
 # https://www.bleachbit.org
 #
 # This program is free software: you can redistribute it and/or modify
@@ -31,6 +31,9 @@ import shutil
 import sys
 import tempfile
 import unittest
+if 'win32' == sys.platform:
+    import winreg
+    import win32gui
 
 
 class BleachbitTestCase(unittest.TestCase):
@@ -107,11 +110,11 @@ class BleachbitTestCase(unittest.TestCase):
     #
     # file creation functions
     #
-    def write_file(self, filename, contents=b''):
+    def write_file(self, filename, contents=b'', mode='wb'):
         """Create a temporary file, optionally writing contents to it"""
         if not os.path.isabs(filename):
             filename = os.path.join(self.tempdir, filename)
-        with open(extended_path(filename), 'wb') as f:
+        with open(extended_path(filename), mode) as f:
             f.write(contents)
         assert (os.path.exists(extended_path(filename)))
         return filename
@@ -143,32 +146,34 @@ def destructive_tests(title):
     return False
 
 
+def get_env(key):
+    """Get an environment variable. If not set, returns None instead of KeyError."""
+    if not key in os.environ:
+        return None
+    return os.environ[key]
+
+
 def have_root():
     """Return true if we have root privileges on POSIX systems"""
     return sudo_mode() or os.getuid() == 0
 
 
-def skipIfWindows(f):
-    """Skip unit test if running on Windows
+def put_env(key, val):
+    """Put an environment variable. None removes the key"""
+    if not val:
+        del os.environ[key]
+    else:
+        os.environ[key] = val
 
-    Not compatible at the class level
-    """
-    @functools.wraps(f)
-    def wrapper(*args, **kwargs):
-        if sys.platform == 'win32':
-            return unittest.skipIf('win32' == sys.platform, 'running on Windows')
-        return f(*args, **kwargs)
-    return wrapper
+
+def skipIfWindows(f):
+    """Skip unit test if running on Windows"""
+    return unittest.skipIf('win32' == sys.platform, 'running on Windows')(f)
 
 
 def skipUnlessWindows(f):
-    """Skip unit test unless running on Windows
-
-    Not compatible at the class level"""
-    @functools.wraps(f)
-    def wrapper(*args, **kwargs):
-        return unittest.skipUnless('win32' == sys.platform, 'not running on Windows')
-    return wrapper
+    """Skip unit test unless running on Windows"""
+    return unittest.skipUnless('win32' == sys.platform, 'not running on Windows')(f)
 
 
 def touch_file(filename):
@@ -208,3 +213,22 @@ def validate_result(self, result, really_delete=False):
             self.assertNotLExists(filename)
         else:
             self.assertLExists(filename)
+
+
+def get_winregistry_value(key, subkey):
+    try:
+        with winreg.OpenKey(key,  subkey) as hkey:
+            return winreg.QueryValue(hkey, None)
+    except FileNotFoundError:
+        return None
+
+
+def get_opened_windows_titles():
+    opened_windows_titles = []
+
+    def enumerate_opened_windows_titles(hwnd, ctx):
+        if win32gui.IsWindowVisible(hwnd):
+            opened_windows_titles.append(win32gui.GetWindowText(hwnd))
+
+    win32gui.EnumWindows(enumerate_opened_windows_titles, None)
+    return opened_windows_titles

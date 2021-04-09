@@ -1,7 +1,7 @@
 # vim: ts=4:sw=4:expandtab
 
 # BleachBit
-# Copyright (C) 2008-2020 Andrew Ziem
+# Copyright (C) 2008-2021 Andrew Ziem
 # https://www.bleachbit.org
 #
 # This program is free software: you can redistribute it and/or modify
@@ -93,8 +93,7 @@ class Cleaner:
                     for dummy in cmd.execute(False):
                         return False
                 for ds in self.get_deep_scan(option_id):
-                    if isinstance(ds, dict):
-                        return False
+                    return False
             except Exception:
                 logger = logging.getLogger(__name__)
                 logger.exception('exception in auto_hide(), cleaner=%s, option=%s',

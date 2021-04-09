@@ -2,7 +2,7 @@
 # -*- coding: UTF-8 -*-
 
 # BleachBit
-# Copyright (C) 2008-2020 Andrew Ziem
+# Copyright (C) 2008-2021 Andrew Ziem
 # https://www.bleachbit.org
 #
 # This program is free software: you can redistribute it and/or modify
@@ -41,6 +41,10 @@ try:
     Pattern = re.Pattern
 except AttributeError:
     Pattern = re._pattern_type
+
+
+JOURNALD_REGEX = r'^Vacuuming done, freed ([\d.]+[BKMGT]?) of archived journals (on disk|from [\w/]+).$'
+
 
 class LocaleCleanerPath:
     """This represents a path with either a specific folder name or a folder name pattern.
@@ -405,7 +409,7 @@ class Locales:
 
 
 def __is_broken_xdg_desktop_application(config, desktop_pathname):
-    """Returns boolean whether application deskop entry file is broken"""
+    """Returns boolean whether application desktop entry file is broken"""
     if not config.has_option('Desktop Entry', 'Exec'):
         logger.info(
             "is_broken_xdg_menu: missing required option 'Exec': '%s'", desktop_pathname)
@@ -604,9 +608,8 @@ def run_cleaner_cmd(cmd, args, freed_space_regex=r'[\d.]+[kMGTE]?B?', error_line
 
 def journald_clean():
     """Clean the system journals"""
-    freed_space_regex = '^Vacuuming done, freed ([\d.]+[KMGT]?) of archived journals on disk.$'
     try:
-        return run_cleaner_cmd('journalctl', ['--vacuum-size=1'], freed_space_regex)
+        return run_cleaner_cmd('journalctl', ['--vacuum-size=1'], JOURNALD_REGEX)
     except subprocess.CalledProcessError as e:
         raise RuntimeError("Error calling '%s':\n%s" %
                            (' '.join(e.cmd), e.output))
@@ -658,8 +661,7 @@ def get_globs_size(paths):
     """Get the cumulative size (in bytes) of a list of globs"""
     total_size = 0
     for path in paths:
-        from glob import iglob
-        for p in iglob(path):
+        for p in glob.iglob(path):
             total_size += FileUtilities.getsize(p)
     return total_size
 
@@ -699,33 +701,30 @@ units = {"B": 1, "k": 10**3, "M": 10**6, "G": 10**9}
 
 
 def parseSize(size):
+    """Parse the size returned by dnf"""
     number, unit = [string.strip() for string in size.split()]
     return int(float(number)*units[unit])
 
 
 def dnf_autoremove():
-    """Run 'dnf autoremove' and return size in bytes recovered"""
+    """Run 'dnf autoremove' and return size in bytes recovered."""
     if os.path.exists('/var/run/dnf.pid'):
         msg = _(
             "%s cannot be cleaned because it is currently running.  Close it, and try again.") % "Dnf"
         raise RuntimeError(msg)
     cmd = ['dnf', '-y', 'autoremove']
-    process = subprocess.Popen(
-        cmd, stderr=subprocess.STDOUT, stdout=subprocess.PIPE)
+    (rc, stdout, stderr) = General.run_external(cmd)
     freed_bytes = 0
-    while True:
-        line = process.stdout.readline().replace("\n", "")
-        if 'Error: This command has to be run under the root user.' == line:
-            raise RuntimeError('dnf autoremove >> requires root permissions')
-        if 'Nothing to do.' == line:
-            break
-        cregex = re.compile("Freed space: ([\d.]+[\s]+[BkMG])")
-        match = cregex.search(line)
-        if match:
-            freed_bytes = parseSize(match.group(1))
-            break
-        if "" == line and process.poll() != None:
-            break
+    allout = stdout + stderr
+    if 'Error: This command has to be run under the root user.' in allout:
+        raise RuntimeError('dnf autoremove >> requires root permissions')
+    if rc > 0:
+        raise RuntimeError('dnf raised error %s: %s' % (rc, stderr))
+
+    cregex = re.compile("Freed space: ([\d.]+[\s]+[BkMG])")
+    match = cregex.search(allout)
+    if match:
+        freed_bytes = parseSize(match.group(1))
     logger.debug(
         'dnf_autoremove >> total freed bytes: %s', freed_bytes)
     return freed_bytes
